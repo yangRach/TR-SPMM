@@ -97,73 +97,6 @@ inline bool units_match_check(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
     return (conflict_ab | conflict_cd | conflict_cross) == 0;
 }
 
-// 四列粗粒度判定:
-// A/B 为第一个 pair, C/D 为第二个 pair, mask 的 bit0~bit3 对应 A~D 是否非零.
-// Z = !(AB(C + D) v CD(A + B))
-// 返回值:
-//   0 -> 全零/可跳过
-//   1 -> 单个满 pair
-//   2 -> 两个 pair 都只有少量非零, 可走轻量路径
-//   3 -> 存在一个满 pair 且另一个 pair 仍有非零, 走通用路径
-inline bool coarse_grained_4col_z_check_online(int mask) {
-    mask &= 0xf;
-    const bool a = (mask & 0x1) != 0;
-    const bool b = (mask & 0x2) != 0;
-    const bool c = (mask & 0x4) != 0;
-    const bool d = (mask & 0x8) != 0;
-    return !((a && b && (c || d)) || (c && d && (a || b)));
-}
-
-inline int coarse_grained_4col_route_online(int mask) {
-    mask &= 0xf;
-    if (mask == 0) return 0;
-    if (mask == 0x3 || mask == 0xc) return 1;
-    if (coarse_grained_4col_z_check_online(mask)) return 2;
-    return 3;
-}
-
-static inline void encode_sptc_row_by_route_online(
-    int route, int mask, const float lane_vals[4], float row_vals[2], int row_pos[2]) {
-    row_vals[0] = 0.0f; row_vals[1] = 0.0f;
-    row_pos[0] = -1; row_pos[1] = -1;
-
-    if (route == 0) return;
-
-    if (route == 1) {
-        if ((mask & 0x3) == 0x3) {
-            row_vals[0] = lane_vals[0]; row_pos[0] = 0;
-            row_vals[1] = lane_vals[1]; row_pos[1] = 1;
-            return;
-        }
-        if ((mask & 0xc) == 0xc) {
-            row_vals[0] = lane_vals[2]; row_pos[0] = 2;
-            row_vals[1] = lane_vals[3]; row_pos[1] = 3;
-            return;
-        }
-    }
-
-    if (route == 2) {
-        if (mask == 0x5) {
-            row_vals[0] = lane_vals[0]; row_pos[0] = 0;
-            row_vals[1] = lane_vals[2]; row_pos[1] = 2;
-            return;
-        }
-        if (mask == 0xa) {
-            row_vals[0] = lane_vals[1]; row_pos[0] = 1;
-            row_vals[1] = lane_vals[3]; row_pos[1] = 3;
-            return;
-        }
-    }
-
-    int slot = 0;
-    for (int p = 0; p < 4 && slot < 2; ++p) {
-        if (((mask >> p) & 1) == 0) continue;
-        row_vals[slot] = lane_vals[p];
-        row_pos[slot] = p;
-        ++slot;
-    }
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -345,51 +278,51 @@ static std::vector<SptcUnit> build_sptc_units(
     }
     if (candidates.empty()) return units;
 
-    std::stable_sort(candidates.begin(), candidates.end(), [&](int a, int b) {
+    std::sort(candidates.begin(), candidates.end(), [&](int a, int b) {
         int ca = col_info.at(a).count, cb = col_info.at(b).count;
         if (ca != cb) return ca > cb;
         return a < b;
     });
 
-    // 双指针打包: 左指针固定当前最密列, 右指针从尾部向前寻找兼容列
+    // 贪心打包相邻兼容列
     std::vector<bool> used(candidates.size(), false);
-    int left = 0;
-    int right = (int)candidates.size() - 1;
 
-    while (1) {
-        while (left <= right && used[left]) ++left;
-        while (left <= right && used[right]) --right;
-        if (left > right) break;
-
-        int col_a = candidates[left];
+    for (int i = 0; i < (int)candidates.size(); ++i) {
+        if (used[i]) continue;
+        int col_a = candidates[i];
         auto& info_a = col_info.at(col_a);
-        int match_idx = -1;
+        used[i] = true;
 
-        for (int probe = right; probe > left; --probe) {
-            if (used[probe]) continue;
-            int col_b = candidates[probe];
+        // 寻找兼容的配对列
+        int best_j = -1;
+        for (int j = i + 1; j < (int)candidates.size(); ++j) {
+            if (used[j]) continue;
+            int col_b = candidates[j];
             if (units_match_check(info_a.vec, col_info.at(col_b).vec)) {
-                match_idx = probe;
-                break;
+                best_j = j;
+                break; // 第一个兼容的即可 (已按密度排序)
             }
         }
 
-        SptcUnit unit;
-        unit.col1 = col_a;
-        used[left] = true;
-        if (match_idx >= 0) {
-            int col_b = candidates[match_idx];
+        if (best_j >= 0) {
+            int col_b = candidates[best_j];
             auto& info_b = col_info.at(col_b);
-            used[match_idx] = true;
+            used[best_j] = true;
+            SptcUnit unit;
+            unit.col1 = col_a;
             unit.col2 = col_b;
             unit.vec = info_a.vec | info_b.vec;
             unit.nnz = info_a.count + info_b.count;
+            units.push_back(unit);
         } else {
+            // 单列 Unit
+            SptcUnit unit;
+            unit.col1 = col_a;
             unit.col2 = -1;
             unit.vec = info_a.vec;
             unit.nnz = info_a.count;
+            units.push_back(unit);
         }
-        units.push_back(unit);
     }
     return units;
 }
@@ -732,34 +665,38 @@ std::vector<torch::Tensor> block_sptc_2to4_online(
             for (int pos = 0; pos < sptc_group; ++pos) sptc_columns.push_back(group[pos]);
         }
 
-        // Step 4: 生成 SPTC 元数据 (每行每组先做粗粒度分类, 再按路径编码 value + position)
+        // Step 4: 生成 SPTC 元数据 (每行每组的 value + position)
         for (int g = sptc_group_offsets.back(); g < (int)sptc_window_row.size(); ++g) {
+            // 该 group 的 4 列
             int base = g * sptc_group;
+            std::vector<int> gcols;
+            for (int p = 0; p < sptc_group; ++p) {
+                int c = sptc_columns[base + p];
+                if (c >= 0) gcols.push_back(c);
+            }
 
             for (int local_row = 0; local_row < window; ++local_row) {
-                int mask = 0;
-                float lane_vals[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-                float row_vals[2];
-                int row_pos[2];
-
-                for (int p = 0; p < sptc_group; ++p) {
-                    int col = sptc_columns[base + p];
-                    if (col < 0) continue;
+                uint8_t mask = 0;
+                int slots = 0;
+                float row_vals[2] = {0.0f, 0.0f};
+                int8_t row_pos[2] = {-1, -1};
+                for (int p = 0; p < (int)gcols.size(); ++p) {
+                    int col = gcols[p];
                     auto& rows_for_col = col_info.at(col).rows;
                     auto found = std::find_if(rows_for_col.begin(), rows_for_col.end(),
                         [&](const auto& item) { return item.first == local_row; });
                     if (found == rows_for_col.end()) continue;
-                    mask |= (1 << p);
-                    lane_vals[p] = values[found->second];
+                    mask |= (uint8_t)(1 << p);
+                    if (slots < sptc_per_row) {
+                        row_vals[slots] = values[found->second];
+                        row_pos[slots] = (int8_t)p;
+                    }
+                    slots++;
                 }
-
-                const int route = coarse_grained_4col_route_online(mask);
-                encode_sptc_row_by_route_online(route, mask, lane_vals, row_vals, row_pos);
-
-                sptc_row_masks.push_back((uint8_t)mask);
+                sptc_row_masks.push_back(mask);
                 for (int s = 0; s < sptc_per_row; ++s) {
                     sptc_values.push_back(row_vals[s]);
-                    sptc_col_positions.push_back((int8_t)row_pos[s]);
+                    sptc_col_positions.push_back(row_pos[s]);
                 }
             }
         }

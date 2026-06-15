@@ -4,9 +4,23 @@
 ## 项目说明
 数据集放在datasets/
 LIBRA_SKIP_TC=true的意思是跳过tc块，改为false的话tcu就不会等于0
-编译命令为：python setup_online.py build_ext --inplace
+在TR-SPMM_zzx/TR-source目录下，编译命令为：
+python setup_online.py build_ext --inplace
+在TR-SPMM_zzx/TR-source/spmm目录下，运行命令为：
+python spmm_3090_fp16_test.py 128 mip1   
 在TR-source/目录下是编译block分块的代码，在TR-source/SpMM/下就是编译内核代码
+展示24匹配的结果
+cd /home/zhangzhixuan/TR-SPMM_zzx/TR-source
+python test_24_matching.py --path /home/zhangzhixuan/TR-SPMM_zzx/dgl_dataset/sp_matrix/mip1.npz
 
+编译block_matching_cuda.cu对应的python文件
+cd /home/zhangzhixuan/TR-SPMM_zzx/TR-source
+python setup_cuda.py build_ext --inplace
+
+显示cpu版本的匹配
+python test_24_matching.py
+显示cuda的匹配
+python test_24_matching.py --cuda [ 矩阵名称] --window 16
 ## block_online.cpp 代码结构
 
 ### 一、数据结构定义
