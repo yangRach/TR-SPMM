@@ -9,18 +9,35 @@ python setup_online.py build_ext --inplace
 在TR-SPMM_zzx/TR-source/spmm目录下，运行命令为：
 python spmm_3090_fp16_test.py 128 mip1   
 在TR-source/目录下是编译block分块的代码，在TR-source/SpMM/下就是编译内核代码
-展示24匹配的结果
-cd /home/zhangzhixuan/TR-SPMM_zzx/TR-source
-python test_24_matching.py --path /home/zhangzhixuan/TR-SPMM_zzx/dgl_dataset/sp_matrix/mip1.npz
+
+conda activate libra
+cd /home/zhangzhixuan/TR-SPMM_zzx
+
 
 编译block_matching_cuda.cu对应的python文件
 cd /home/zhangzhixuan/TR-SPMM_zzx/TR-source
 python setup_cuda.py build_ext --inplace
 
+使用test_24_matching.py展示cuda和cpp的结构化匹配的结果
+
 显示cpu版本的匹配
 python test_24_matching.py
+python test_24_matching.py --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/mip1/mip1.mtx --window 16
+python test_24_matching.py --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/gupta1/gupta1.mtx --window 16
+python test_24_matching.py --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/Bump_2911/Bump_2911.mtx --window 16
+
+
 显示cuda的匹配
-python test_24_matching.py --cuda [ 矩阵名称] --window 16
+python test_24_matching.py --cuda  --window 16
+python test_24_matching.py --cuda --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/mip1/mip1.mtx --window 16
+python test_24_matching.py --cuda --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/gupta1/gupta1.mtx --window 16
+python test_24_matching.py --cuda --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/2D_27628_bjtcai/2D_27628_bjtcai.mtx --window 16
+python test_24_matching.py --cuda --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/Bump_2911/Bump_2911.mtx --window 16
+临时测试：
+conda activate libra
+cd /home/zhangzhixuan/TR-SPMM_zzx/TR-source
+python setup_cuda.py build_ext --inplace
+python test_24_matching.py --cuda --path /home/zhangzhixuan/TR-SPMM_zzx/datasets/mip1/mip1.mtx --window 16
 ## block_online.cpp 代码结构
 
 ### 一、数据结构定义

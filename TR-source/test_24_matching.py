@@ -201,6 +201,10 @@ def validate_stats(mat, stats):
     expected_total = num_groups * 32
     fake = stats["fake_zeros"]
     total_slots = reported_nnz + fake
+    if total_slots > expected_total:
+        errors.append(
+            f"容量不足: real_nnz+fake_zeros={total_slots}, capacity=num_groups*32={expected_total}"
+        )
 
     if errors:
         print("\n[警告] 校验发现问题:")
@@ -310,6 +314,8 @@ def main():
     # ---- 调用 C++ 匹配 ----
     backend_name = "CUDA" if args.cuda else "CPU"
     print(f"\n[匹配] 开始 2:4 结构化匹配 ({backend_name}, window_size={args.window})...")
+    if args.cuda:  #如果是cuda，可能在前一次的gpu异步中未完成，需要同步
+        torch.cuda.synchronize()
     t0 = time.perf_counter()
 
     if args.cuda:
