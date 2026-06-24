@@ -108,146 +108,116 @@ static std::vector<Group2x4> match_window_2to4(
     int n = (int)columns.size();
 
     // ======================================================================
-    // 步骤 1: 密度降序排序
+    // 步骤 1: 按原始列索引排序 (保持矩阵的空间局部性)
     //
-    // 使用 __builtin_popcount 作为排序依据 (等价于 columns[i].nnz),
-    // 非零元多的列排在前面, 优先匹配。
+    // 密度排序会破坏稀疏矩阵天然的列局部性 (相邻列容易互补).
+    // 改为按 col_id 升序排列, 保留原始从左到右的列序.
     // ======================================================================
     std::sort(columns.begin(), columns.end(),
         [](const WinColumn& a, const WinColumn& b) {
-            if (a.nnz != b.nnz) return a.nnz > b.nnz;
             return a.col_id < b.col_id;
         });
 
     // ======================================================================
-    // 步骤 2: 细粒度双指针匹配 (1:2 结构) — 带局部候选视窗
+    // 步骤 2: 细粒度局部滑动视窗匹配 (1:2 结构)
     //
-    // 升级策略:
-    //   - 右指针 R 从最稀疏列 (末尾) 向左扫描
-    //   - 不再"碰到 cost<=2 就立刻匹配", 而是收集最多 LOOKAHEAD_SIZE 个候选项
-    //   - 从中选 conflict 最小的列; 若遇到 cost==0 的完美匹配则直接锁定
-    //   - 避免了贪心匹配忽略左侧 0 冲突完美匹配的问题
+    // 策略:
+    //   - 外层 i 从 0 开始顺序扫描 (利用原始列序的局部性)
+    //   - 内层 j 在 [i+1, i+SEARCH_WINDOW) 范围内寻优
+    //   - cost==0 立即锁定; 否则选视窗内 cost<=T_max 的最小 cost 列
+    //   - 避免了全局排序导致的"远距离配对", 保留列的空间局部性
     //
     // 关键位运算:
-    //   - Col[L] & Col[R]: 找出两列在同一行都有非零元的行 (冲突行)
-    //   - __builtin_popcount: O(1) 统计冲突行数
+    //   - mask[i] & mask[j]: 两列共享行 → conflict
+    //   - __builtin_popcount: O(1) 统计 conflict = cost
     // ======================================================================
+    const int SEARCH_WINDOW = 32;   // Step2 局部视窗大小
+    const int T_MAX = 12;            // 允许的最大冲突行数
+
     std::vector<bool> matched(n, false);
     std::vector<Pair1x2> pairs;
 
-    const int LOOKAHEAD_SIZE = 2048;  // 局部候选视窗: 最多收集 2048 个候选列
+    for (int i = 0; i < n; ++i) {
+        if (matched[i]) continue;
 
-    for (int L = 0; L < n; ++L) {
-        if (matched[L]) continue;
+        uint16_t mask_i = columns[i].mask;
+        int best_j = -1;
+        int min_cost = T_MAX + 1;
+        int j_end = std::min(i + SEARCH_WINDOW, n);
 
-        uint16_t mask_L = columns[L].mask;
-        bool found = false;
+        for (int j = i + 1; j < j_end; ++j) {
+            if (matched[j]) continue;
 
-        // ---- 局部候选视窗扫描 ----
-        int best_R = -1;
-        int min_cost = 999;
-        int candidates_found = 0;
-
-        for (int R = n - 1; R > L; --R) {
-            if (matched[R]) continue;
-
-            uint16_t and_val = mask_L & columns[R].mask;
+            uint16_t and_val = mask_i & columns[j].mask;
             int cost = __builtin_popcount(and_val);
 
             if (cost == 0) {
-                // 遇到 0 冲突完美匹配, 直接贪心锁定并提前终止扫描
-                best_R = R;
+                // 0 冲突完美匹配, 直接锁定并提前终止
+                best_j = j;
                 min_cost = 0;
                 break;
             }
 
-            if (cost <= 1) {  // T_max = 2
-                if (cost < min_cost) {
-                    min_cost = cost;
-                    best_R = R;
-                }
-                candidates_found++;
-                if (candidates_found >= LOOKAHEAD_SIZE) {
-                    break;  // 候选窗口已满, 使用当前 best_R
-                }
+            if (cost <= T_MAX && cost < min_cost) {
+                min_cost = cost;
+                best_j = j;
             }
         }
 
-        // ---- 使用最佳候选构建 Pair ----
-        if (best_R != -1) {
-            uint16_t and_val = mask_L & columns[best_R].mask;
+        if (best_j != -1) {
+            uint16_t and_val = mask_i & columns[best_j].mask;
             Pair1x2 p;
-            p.col1 = columns[L].col_id;
-            p.col2 = columns[best_R].col_id;
+            p.col1 = columns[i].col_id;
+            p.col2 = columns[best_j].col_id;
             p.G1   = and_val;
-            p.G2   = mask_L | columns[best_R].mask;
+            p.G2   = mask_i | columns[best_j].mask;
             p.is_fallback = false;
             pairs.push_back(p);
 
-            matched[L] = true;
-            matched[best_R] = true;
-            found = true;
-        }
-
-        if (!found) {
-            // Fallback: 右侧无可配对列 (窗口列数为奇数, 或所有右侧列冲突都 > 2)
+            matched[i] = true;
+            matched[best_j] = true;
+        } else {
+            // Fallback: 视窗内无兼容列 → 虚拟全0列
             Pair1x2 p;
-            p.col1 = columns[L].col_id;
-            p.col2 = -1;               // 虚拟全0列
-            p.G1   = 0;                // 全0列的 AND 结果为 0
-            p.G2   = mask_L;           // OR 结果就是 L 列本身
+            p.col1 = columns[i].col_id;
+            p.col2 = -1;
+            p.G1   = 0;
+            p.G2   = mask_i;
             p.is_fallback = true;
             pairs.push_back(p);
 
-            matched[L] = true;
-            stats.fine_fb++;           // 统计细粒度 Fallback (1列0)
+            matched[i] = true;
+            stats.fine_fb++;
         }
     }
 
     // ======================================================================
-    // 步骤 3: 粗粒度迭代匹配 (2:4 结构) — 收缩双指针
+    // 步骤 3: 粗粒度局部滑动视窗匹配 (2:4 结构)
     //
-    // 将步骤2产生的 Pair 两两配对成 4 列 Group。
-    //
-    // 升级策略:
-    //   - pL 从密集端 (左) 开始, pR 从稀疏端 (右) 向中间逼近
-    //   - 密集 Pair 优先与稀疏 Pair 配对, 利用"异或互补"最大化 Z_conflict==0 的概率
-    //   - 替代旧版"密集优先配密集"的贪心, 显著降低粗粒度 Fallback
+    // 策略:
+    //   - pairs 已继承原始列序的局部性, 不再做密度排序
+    //   - 外层 i 顺序扫描, 内层 j 在 [i+1, i+GROUP_SEARCH_WINDOW) 内寻优
+    //   - 逻辑门冲突检测 Z==0 则立刻匹配; 找不到则 Fallback
+    //   - 限制搜索范围在物理相邻的 Pair 内, 利用矩阵的列局部性
     //
     // 逻辑门冲突检测:
     //   对于 Pair A (G1, G2) 和 Pair B (G3, G4):
-    //     Z_conflict = (G1 & G4) | (G2 & G3)
-    //
-    //   解释:
-    //     - G1 = A中两列同时存在的行 (A内部已占2个nnz的行)
-    //     - G4 = B中至少一列存在的行 (B存在的行)
-    //     - (G1 & G4) 检测: A已占2个nnz的行是否在B中也存在 → 会超2
-    //     - (G2 & G3) 同理检测 B已占2个nnz的行是否在A中也存在
-    //     - Z_conflict == 0 ⇔ 合并后每行 ≤ 2 nnz, 符合2:4要求
-    //
-    // Fallback: 无法匹配则填充两列全0。
+    //     Z = (G1 & G4) | (G2 & G3)
+    //     Z == 0 ⇔ 合并后每行 ≤ 2 nnz
     // ======================================================================
+    const int GROUP_SEARCH_WINDOW = 1024;  // Step3 局部视窗大小
+
     int np = (int)pairs.size();
     std::vector<bool> pair_used(np, false);
 
-    // 按 Pair 密度 (G2 的 popcnt) 降序排列, 密集在前 (供双指针使用)
-    std::vector<int> order(np);
-    for (int i = 0; i < np; ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [&](int a, int b) {
-        return __builtin_popcount(pairs[a].G1) > __builtin_popcount(pairs[b].G1);
-    });
-
-    // 收缩双指针: pL 从密集端(左), pR 从稀疏端(右)向中间逼近
-    for (int pL = 0; pL < np; ++pL) {
-        int i = order[pL];
+    for (int i = 0; i < np; ++i) {
         if (pair_used[i]) continue;
 
         const Pair1x2& pa = pairs[i];
         bool found = false;
+        int j_end = std::min(i + GROUP_SEARCH_WINDOW, np);
 
-        // pR 从最稀疏端(右)向左逼近, 密集配稀疏 → 最大化兼容概率
-        for (int pR = np - 1; pR > pL; --pR) {
-            int j = order[pR];
+        for (int j = i + 1; j < j_end; ++j) {
             if (pair_used[j]) continue;
 
             const Pair1x2& pb = pairs[j];
@@ -256,7 +226,6 @@ static std::vector<Group2x4> match_window_2to4(
             uint16_t Z = (pa.G1 & pb.G2) | (pa.G2 & pb.G1);
 
             if (Z == 0) {
-                // 完美符合 2:4 要求!
                 Group2x4 g;
                 g.cols[0] = pa.col1;
                 g.cols[1] = pa.col2;
@@ -272,17 +241,16 @@ static std::vector<Group2x4> match_window_2to4(
         }
 
         if (!found) {
-            // Fallback: 该 Pair 无法匹配 → 填充两列全0
             Group2x4 g;
             g.cols[0] = pa.col1;
             g.cols[1] = pa.col2;
-            g.cols[2] = -1;    // 第1列全0
-            g.cols[3] = -1;    // 第2列全0
+            g.cols[2] = -1;
+            g.cols[3] = -1;
             g.zero_cols = 2;
             groups.push_back(g);
 
             pair_used[i] = true;
-            stats.coarse_fb += 2;  // 粗粒度 Fallback: 插入 2 列0
+            stats.coarse_fb += 2;
         }
     }
 
@@ -502,9 +470,9 @@ PYBIND11_MODULE(matching_utils, m) {
 
         核心算法:
           1. 16行窗口划分 → uint16_t 编码 nnz 分布
-          2. __builtin_popcount 密度降序
-          3. 双指针细粒度匹配 (1:2 Pair) + 冲突检测 (popcnt(AND) <= 2)
-          4. 粗粒度迭代匹配 (2:4 Group) + 逻辑门约束 (Z_conflict == 0)
+          2. 按原始列序, 局部滑动视窗最优匹配 (1:2 Pair, 视窗 32 列)
+          3. 按原始 Pair 序, 局部滑动视窗匹配 (2:4 Group, 视窗 16 Pair)
+          4. 逻辑门约束 Z_conflict == 0 检测 2:4 兼容性
           5. 元素级假0对齐填充
 
         接口:
@@ -536,8 +504,4 @@ PYBIND11_MODULE(matching_utils, m) {
         - coarse_fallback     (粗粒度 Fallback 插入整列0个数)
         - fake_zeros          (元素级假0填充总数)
           )pbdoc");
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> upstream/main

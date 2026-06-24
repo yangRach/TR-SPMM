@@ -1,5 +1,6 @@
 datasets/
 dgl_dataset/
+<<<<<<< HEAD
 .venv/
 __pycache__/
 *.pyc
@@ -8,3 +9,24 @@ build/
 *.o
 .ninja_log
 .ninja_deps
+=======
+
+# 忽略所有 C/C++ 编译产物
+*.o
+*.so
+*.a
+*.out
+
+# 忽略 Python 缓存和编译文件
+__pycache__/
+*.pyc
+
+# 忽略构建目录及其所有内容
+build/
+TR-source/build/
+dataset_mp_processed/
+
+# 忽略 IDE 配置文件（可选）
+.vscode/
+.idea/
+>>>>>>> upstream/main

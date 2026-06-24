@@ -8,7 +8,9 @@ setup(
         CppExtension(
             name='matching_utils',
             sources=[
+
                 './Block/block_match_windows.cpp',
+
             ],
             extra_compile_args=['-O3', '-march=native'],
         ),
