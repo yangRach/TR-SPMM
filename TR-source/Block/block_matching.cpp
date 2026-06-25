@@ -1,4 +1,4 @@
-/**
+/**  双指针
  * block_matching.cpp — 基于底层位运算的 2:4 结构化稀疏匹配算法
  *
  * 算法原理:
@@ -536,4 +536,8 @@ PYBIND11_MODULE(matching_utils, m) {
         - coarse_fallback     (粗粒度 Fallback 插入整列0个数)
         - fake_zeros          (元素级假0填充总数)
           )pbdoc");
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> upstream/main

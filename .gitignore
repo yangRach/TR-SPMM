@@ -1,5 +1,15 @@
 datasets/
 dgl_dataset/
+<<<<<<< HEAD
+.venv/
+__pycache__/
+*.pyc
+build/
+*.so
+*.o
+.ninja_log
+.ninja_deps
+=======
 
 # 忽略所有 C/C++ 编译产物
 *.o
@@ -19,3 +29,4 @@ dataset_mp_processed/
 # 忽略 IDE 配置文件（可选）
 .vscode/
 .idea/
+>>>>>>> upstream/main

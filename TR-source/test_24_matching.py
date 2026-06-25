@@ -184,6 +184,10 @@ def validate_stats(mat, stats):
     max_sptc_slots = num_sptc * 32
     fake = stats["fake_zeros"]
     total_slots = reported_nnz + fake
+    if total_slots > expected_total:
+        errors.append(
+            f"容量不足: real_nnz+fake_zeros={total_slots}, capacity=num_groups*32={expected_total}"
+        )
 
     if errors:
         print("\n[警告] 校验发现问题:")
@@ -370,23 +374,24 @@ def main():
     # ---- 导入 C++ 模块 ----
     # 必须先 import torch 预加载动态库, 否则 .so 链接的 libc10.so 找不到
     try:
-        import torch  # noqa: F401
+        import torch  # noqa: F401  预加载 torch 动态库
         import matching_utils
-        import matching_utils_hash
-        import matching_utils_bucket
-        try:
-            import matching_utils_online
-            _HAS_CUDA = True
-        except ImportError:
-            _HAS_CUDA = False
     except ImportError as e:
         print("=" * 60)
         print(f"  错误: 导入模块失败 — {e}")
-        print("  请先编译 C++ 代码:")
-        print("    cd TR-source/")
-        print("    CXX=$CONDA_PREFIX/bin/g++ python setup_24matching.py build_ext --inplace")
+        print("  请先编译对应扩展:")
+        print("    CPU: cd TR-source/ && CXX=$CONDA_PREFIX/bin/g++ python setup_24matching.py build_ext --inplace")
+        print("    CUDA: cd TR-source/ && python setup_cuda.py build_ext --inplace")
         print("=" * 60)
         sys.exit(1)
+
+    if args.cuda:
+        if args.window < 1 or args.window > 16:
+            print("错误: CUDA 版本当前仅支持 window_size in [1, 16] (uint16 mask 实现)")
+            sys.exit(1)
+        if not torch.cuda.is_available():
+            print("错误: torch.cuda 不可用，无法运行 CUDA 版本。请检查 NVIDIA 驱动 / CUDA / 可见 GPU。")
+            sys.exit(1)
 
     # ---- 列出数据集 ----
     if args.list:
@@ -428,48 +433,36 @@ def main():
     # ---- 转为 CSR 数组 ----
     row_ptr, col_ind, values, rows, cols = matrix_to_csr_arrays(mat)
 
-    # ---- 选择匹配方法 ----
-    METHODS = {
-        "sliding": ("滑动视窗(双路路由)", matching_utils.match_2to4),
-        "hash":    ("反码哈希混合", matching_utils_hash.match_2to4_hash),
-        "bucket":  ("高低位分桶", matching_utils_bucket.match_2to4_bucket),
-    }
-    DUAL_ROUTING_PARAMS = {"dense_threshold": 8, "t_max": 8}
-    ONLINE_PARAMS = {"dense_threshold": 8, "t_max": 8}
+    # ---- 调用 C++ 匹配 ----
+    print(f"\n[匹配] 开始 2:4 结构化匹配 (window_size={args.window})...")
+    t0 = time.perf_counter()
 
-    if _HAS_CUDA:
-        METHODS["online"] = ("CUDA在线双路路由", matching_utils_online.match_2to4_online)
-    elif args.method == "online":
-        print("错误: CUDA 模块 matching_utils_online 未编译或 GPU 不可用")
-        print("  请确认编译时 nvcc 可用, 且运行时 GPU 驱动正常")
-        sys.exit(1)
+    stats = matching_utils.match_2to4(
+        row_ptr, col_ind, values,
+        window_size=args.window
+    )
 
-    # ---- 执行匹配 ----
-    if args.compare:
-        _run_compare(mat, row_ptr, col_ind, values, args.window, METHODS)
-    elif args.method == "online":
-        method_name, match_fn = METHODS["online"]
-        stats, elapsed = _run_single_online(mat, row_ptr, col_ind, values,
-                                            args.window, method_name, match_fn,
-                                            **ONLINE_PARAMS)
-        _display_stats_online(stats, elapsed, method_name)
-        _validate_online(mat, stats)
-        print("\n测试完成!")
-    elif args.method == "sliding":
-        method_name, match_fn = METHODS["sliding"]
-        stats, elapsed = _run_single_dual(mat, row_ptr, col_ind, values,
-                                          args.window, method_name, match_fn,
-                                          **DUAL_ROUTING_PARAMS)
-        _display_stats(stats, elapsed, method_name)
-        validate_stats(mat, stats)
-        print("\n测试完成!")
-    else:
-        method_name, match_fn = METHODS[args.method]
-        stats, elapsed = _run_single(mat, row_ptr, col_ind, values,
-                                     args.window, method_name, match_fn)
-        _display_stats(stats, elapsed, method_name)
-        validate_stats(mat, stats)
-        print("\n测试完成!")
+    elapsed = time.perf_counter() - t0
+
+    # ---- 展示 Python 层结果 ----
+    print(f"╔══════════════════════════════════════════════╗")
+    print(f"║   Python 层结果确认                          ║")
+    print(f"╠══════════════════════════════════════════════╣")
+    print(f"║   C++ 耗时:            {elapsed:.4f} 秒               ║")
+    print(f"║   16行 Row Panels:    {stats['num_row_panels']:<8d}                 ║")
+    print(f"║   16×4 Groups:        {stats['num_groups']:<8d}                 ║")
+    print(f"║   16×16 稀疏块:       {stats['num_16x16_blocks']:<8d}                 ║")
+    print(f"║   Block 填充 Group:   {stats['block_padding_groups']:<8d}                 ║")
+    print(f"╠══════════════════════════════════════════════╣")
+    print(f"║   细粒度 Fallback:    {stats['fine_fallback']:<8d}                 ║")
+    print(f"║   粗粒度 Fallback:    {stats['coarse_fallback']:<8d}                 ║")
+    print(f"║   假0填充:            {stats['fake_zeros']:<8d}                 ║")
+    print(f"╚══════════════════════════════════════════════╝")
+
+    # ---- 校验 ----
+    validate_stats(mat, stats)
+
+    print("\n测试完成!")
 
 
 if __name__ == "__main__":
