@@ -67,6 +67,12 @@ struct MatchStats {
     int       fine_fb             = 0;   // 细粒度孤儿列进池数
     int       coarse_fb           = 0;   // 粗粒度不兼容 Pair 进池列数
     int       fake_zeros          = 0;   // 元素级假0填充总数
+
+    // Dense TC 块密度统计
+    long long tc_total_nnz        = 0;      // TC 块累计非零元
+    int       tc_block_count      = 0;      // TC 块总个数
+    int       tc_block_max_nnz    = 0;      // 单 TC 块最大 nnz
+    int       tc_block_min_nnz    = 999999; // 单 TC 块最小 nnz
 };
 
 
@@ -202,8 +208,22 @@ static void match_window_2to4(
 
     // 路径 A: TC 路由
     while (nd - processed >= dense_threshold) {
-        for (int k = 0; k < dense_threshold; ++k)
-            out_tc_flat.push_back(local_dense_pool[processed + k]);
+        int block_nnz = 0;
+        for (int k = 0; k < dense_threshold; ++k) {
+            int col_id = local_dense_pool[processed + k];
+            out_tc_flat.push_back(col_id);
+
+            // O(log N) 二分查列在当前窗口的 nnz
+            WinColumn target;
+            target.col_id = col_id;
+            auto it = std::lower_bound(columns.begin(), columns.end(), target);
+            if (it != columns.end() && it->col_id == col_id)
+                block_nnz += it->nnz;
+        }
+        win_stats.tc_total_nnz += block_nnz;
+        win_stats.tc_block_count++;
+        win_stats.tc_block_max_nnz = std::max(win_stats.tc_block_max_nnz, block_nnz);
+        win_stats.tc_block_min_nnz = std::min(win_stats.tc_block_min_nnz, block_nnz);
         processed += dense_threshold;
     }
 
@@ -334,6 +354,12 @@ static MatchStats run_2to4_matching(
         total_stats.fine_fb          += ws.fine_fb;
         total_stats.coarse_fb        += ws.coarse_fb;
         total_stats.fake_zeros       += ws.fake_zeros;
+
+        // Dense TC 块密度统计
+        total_stats.tc_total_nnz     += ws.tc_total_nnz;
+        total_stats.tc_block_count   += ws.tc_block_count;
+        total_stats.tc_block_max_nnz  = std::max(total_stats.tc_block_max_nnz, ws.tc_block_max_nnz);
+        total_stats.tc_block_min_nnz  = std::min(total_stats.tc_block_min_nnz, ws.tc_block_min_nnz);
     }
 
     return total_stats;
@@ -390,6 +416,17 @@ py::dict match_2to4_py(
     printf("║  [路由决策]                                  ║\n");
     printf("║  SPTC 2:4 Groups:  %-8d                ║\n", stats.num_sptc_groups);
     printf("║  TC 16×8 Blocks:   %-8d                ║\n", stats.num_tc_blocks);
+    if (stats.tc_block_count > 0) {
+        int     slots_per_block = 16 * 8;
+        double  avg_nnz = (double)stats.tc_total_nnz / stats.tc_block_count;
+        double  avg_den = avg_nnz / slots_per_block;
+        double  min_den = (double)stats.tc_block_min_nnz / slots_per_block;
+        double  max_den = (double)stats.tc_block_max_nnz / slots_per_block;
+        printf("║  TC 块的 nnz/块:    avg=%-7.1f  min=%-5d  max=%-5d║\n",
+               avg_nnz, stats.tc_block_min_nnz, stats.tc_block_max_nnz);
+        printf("║  Dense TC 密度:     avg=%-7.4f  min=%-7.4f  max=%-7.4f║\n",
+               avg_den, min_den, max_den);
+    }
     printf("╠══════════════════════════════════════════════╣\n");
     printf("║  [SPTC 硬件层 — m16n8k16 指令映射]          ║\n");
     printf("║  16×16 Block 数:   %-8d                ║\n", stats.num_16x16_blocks);
@@ -414,6 +451,10 @@ py::dict match_2to4_py(
     result["fine_fallback"]       = stats.fine_fb;
     result["coarse_fallback"]     = stats.coarse_fb;
     result["fake_zeros"]          = stats.fake_zeros;
+    result["tc_total_nnz"]        = (long long)stats.tc_total_nnz;
+    result["tc_block_count"]      = stats.tc_block_count;
+    result["tc_block_max_nnz"]    = stats.tc_block_max_nnz;
+    result["tc_block_min_nnz"]    = stats.tc_block_min_nnz;
 
     return result;
 }

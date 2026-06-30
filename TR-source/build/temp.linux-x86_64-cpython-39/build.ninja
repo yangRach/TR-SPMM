@@ -3,9 +3,9 @@ cxx = /home/zhangzhixuan/miniconda3/envs/libra/bin/x86_64-conda-linux-gnu-c++
 nvcc = /home/zhangzhixuan/miniconda3/envs/libra/bin/nvcc
 
 cflags = -march=nocona -mtune=haswell -ftree-vectorize -fPIC -fstack-protector-strong -fno-plt -O2 -ffunction-sections -pipe -isystem /home/zhangzhixuan/miniconda3/envs/libra/include -I/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/include -L/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/lib -L/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/lib/stubs -DNDEBUG -D_FORTIFY_SOURCE=2 -O2 -isystem /home/zhangzhixuan/miniconda3/envs/libra/include -I/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/include -L/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/lib -L/home/zhangzhixuan/miniconda3/envs/libra/targets/x86_64-linux/lib/stubs -fPIC -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/torch/csrc/api/include -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/TH -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/THC -I/home/zhangzhixuan/miniconda3/envs/libra/include -I/home/zhangzhixuan/miniconda3/envs/libra/include/python3.9 -c
-post_cflags = -O3 -std=c++17 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=matching_utils_cuda -D_GLIBCXX_USE_CXX11_ABI=0
+post_cflags = -O3 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=matching_utils_online -D_GLIBCXX_USE_CXX11_ABI=0 -std=c++17
 cuda_cflags = -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/torch/csrc/api/include -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/TH -I/home/zhangzhixuan/miniconda3/envs/libra/lib/python3.9/site-packages/torch/include/THC -I/home/zhangzhixuan/miniconda3/envs/libra/include -I/home/zhangzhixuan/miniconda3/envs/libra/include/python3.9 -c
-cuda_post_cflags = -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -O3 -std=c++17 --use_fast_math -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=matching_utils_cuda -D_GLIBCXX_USE_CXX11_ABI=0 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -ccbin /home/zhangzhixuan/miniconda3/envs/libra/bin/x86_64-conda-linux-gnu-cc
+cuda_post_cflags = -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -O3 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=matching_utils_online -D_GLIBCXX_USE_CXX11_ABI=0 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -ccbin /home/zhangzhixuan/miniconda3/envs/libra/bin/x86_64-conda-linux-gnu-cc -std=c++17
 cuda_dlink_post_cflags = 
 ldflags = 
 
@@ -23,7 +23,7 @@ rule cuda_compile
 
 
 
-build /home/zhangzhixuan/TR-SPMM_zzx/TR-source/build/temp.linux-x86_64-cpython-39/Block/block_match_cuda.o: cuda_compile /home/zhangzhixuan/TR-SPMM_zzx/TR-source/Block/block_match_cuda.cu
+build /home/zhangzhixuan/TR-SPMM_zzx/TR-source/build/temp.linux-x86_64-cpython-39/Block/block_matching_online.o: cuda_compile /home/zhangzhixuan/TR-SPMM_zzx/TR-source/Block/block_matching_online.cu
 
 
 
